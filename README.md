@@ -6,11 +6,11 @@ Based on an earlier implementation from T. Machado https://github.com/losonczyla
 Requirements
 =======
 
-NumPy
-SciPy
-CVXOPT (available at http://cvxopt.org/ )
-PICOS  (available at http://picos.zib.de/ )
-MOSEK  (available at https://www.mosek.com/ optional but strongly recommended, free for academic use)
+NumPy    <br />
+SciPy     <br />
+CVXOPT (available at http://cvxopt.org/ )    <br />
+PICOS  (available at http://picos.zib.de/ )    <br />
+MOSEK  (available at https://www.mosek.com/ optional but strongly recommended, free for academic use)  <br />
 
 License
 =======
