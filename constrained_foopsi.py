@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Written by Eftychios A. Pnevmatikakis, based on an implementation by T. Machado
 
 import numpy as np
 
