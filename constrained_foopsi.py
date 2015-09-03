@@ -1,9 +1,42 @@
 # -*- coding: utf-8 -*-
-# Written by Eftychios A. Pnevmatikakis, based on an implementation by T. Machado
+"""
+Created on Tue Sep  1 16:11:25 2015
+
+@author: Eftychios A. Pnevmatikakis, based on an implementation by T. Machado,  Andrea Giovannucci & Ben Deverett
+"""
+
+# -*- coding: utf-8 -*-
+# Written by 
 
 import numpy as np
+import scipy.signal 
+import scipy.linalg
 
-def constrained_foopsi(fluor, b = None, c1 = None, g = None, sn = None, options = []):
+from warnings import warn    
+import time
+import sys    
+try:
+    from cvxopt import matrix, spmatrix, spdiag, solvers
+    import picos
+except ImportError:
+    raise ImportError('Constrained Foopsi requires cvxopt and picos packages.')
+
+
+#%%
+def constrained_foopsi(fluor, 
+                     b = None, 
+                     c1 = None, 
+                     g = None, 
+                     sn = None, 
+                     p= 2, 
+                     method = 'cvx', 
+                     bas_nonneg = True, 
+                     noise_range = [.25,.5],
+                     noise_method = 'logmexp',
+                     lags = 5, 
+                     resparse = 0,
+                     fudge_factor = 1, 
+                     verbosity = False):
 
     """
     Infer the most likely discretized spike train underlying a fluorescence
@@ -26,6 +59,17 @@ def constrained_foopsi(fluor, b = None, c1 = None, g = None, sn = None, options 
     options : dictionary
         list of user selected options (see more below)
 
+
+    'p'             :         2, # AR order 
+    'method'        :     'cvx', # solution method (no other currently supported)
+    'bas_nonneg'    :      True, # bseline strictly non-negative
+    'noise_range'   :  [.25,.5], # frequency range for averaging noise PSD
+    'noise_method'  : 'logmexp', # method of averaging noise PSD
+    'lags'          :         5, # number of lags for estimating time constants
+    'resparse'      :         0, # times to resparse original solution (not supported)
+    'fudge_factor'  :         1, # fudge factor for reducing time constant bias
+    'verbosity'     :     False, # display optimization details
+    
     Returns
     -------
     c            : ndarray of float
@@ -40,33 +84,11 @@ def constrained_foopsi(fluor, b = None, c1 = None, g = None, sn = None, options 
     * Machado et al. 2015. Cell 162(2):338-350
     """
 
-    from warnings import warn    
-    import time
-    import sys    
     
-    defaultopts = {              # Deafult option values
-    'p'             :         2, # AR order 
-    'method'        :     'cvx', # solution method (no other currently supported)
-    'bas_nonneg'    :      True, # bseline strictly non-negative
-    'noise_range'   :  [.25,.5], # frequency range for averaging noise PSD
-    'noise_method'  : 'logmexp', # method of averaging noise PSD
-    'lags'          :         5, # number of lags for estimating time constants
-    'resparse'      :         0, # times to resparse original solution (not supported)
-    'fudge_factor'  :         1, # fudge factor for reducing time constant bias
-    'verbosity'     :     False, # display optimization details
-      }
-    
-    options = SetParms(options,defaultopts);    # set custom options
-    p = options['p']      
-    
-    if g is None or sn is None:
-        g,sn = estimate_parameters(fluor, p, sn, g, options['noise_range'], options['noise_method'], options['lags'], options['fudge_factor'])
+    if g is None or sn is None:        
+        g,sn = estimate_parameters(fluor, p=p, sn=sn, g = g, range_ff=noise_range, method=noise_method, lags=lags, fudge_factor=fudge_factor)
 
-    try:
-        from cvxopt import matrix, spmatrix, spdiag, solvers
-        import picos
-    except ImportError:
-        raise ImportError('Constrained Foopsi requires cvxopt and picos packages.')
+  
     
     T = len(fluor)
     # construct deconvolution matrix  (sp = G*c) 
@@ -89,7 +111,7 @@ def constrained_foopsi(fluor, b = None, c1 = None, g = None, sn = None, options 
         flag_b = True
         cnt += 1
         b = prob.add_variable('b', 1)
-        if options['bas_nonneg']:
+        if bas_nonneg:
             b_lb = 0
         else:
             b_lb = np.min(fluor)
@@ -114,19 +136,21 @@ def constrained_foopsi(fluor, b = None, c1 = None, g = None, sn = None, options 
     
     # solve problem
     try:
-        prob.solve(solver='mosek', verbose=options['verbosity'])
+        prob.solve(solver='mosek', verbose=verbosity)
         sel_solver = 'mosek'
+#        prob.solve(solver='gurobi', verbose=verbosity)
+#        sel_solver = 'gurobi'
     except ImportError:
         warn('MOSEK is not installed. Spike inference may be VERY slow!')
         sel_solver = []
         prob.solver_selection()
-        prob.solve(verbose=options['verbosity'])
+        prob.solve(verbose=verbosity)
         
     # if problem in infeasible due to low noise value then project onto the cone of linear constraints with cvxopt
     if prob.status == 'prim_infeas_cer' or prob.status == 'dual_infeas_cer' or prob.status == 'primal infeasible':
         warn('Original problem infeasible. Adjusting noise level and re-solving')   
         # setup quadratic problem with cvxopt        
-        solvers.options['show_progress'] = options['verbosity']
+        solvers.options['show_progress'] = verbosity
         ind_rows = range(T)
         ind_cols = range(T)
         vals = np.ones(T)
@@ -170,7 +194,8 @@ def estimate_parameters(fluor, p = 2, sn = None, g = None, range_ff = [0.25,0.5]
     if sn is None:
         sn = GetSn(fluor,range_ff,method)
         
-    g = estimate_time_constant(fluor,p,sn,lags,fudge_factor)
+    if g is None:
+        g = estimate_time_constant(fluor,p,sn,lags,fudge_factor)
 
     return g,sn
 
@@ -196,7 +221,6 @@ def estimate_time_constant(fluor, p = 2, sn = None, lags = 5, fudge_factor = 1):
     g       : estimated coefficients of the AR process
     """    
     
-    import scipy.linalg
 
     if sn is None:
         sn = GetSn(fluor)
@@ -235,7 +259,7 @@ def GetSn(fluor, range_ff = [0.25,0.5], method = 'logmexp'):
     sn       : noise standard deviation
     """
     
-    import scipy.signal    
+
     ff, Pxx = scipy.signal.welch(fluor)
     ind1 = ff > range_ff[0]
     ind2 = ff < range_ff[1]
@@ -291,17 +315,6 @@ def nextpow2(value):
         exponent += 1
     return exponent        
     
-def SetParms(inputdictionary,currentopts):
-    """
-    overwrite current options with parameters provided in the input dictionary
-    """
+ 
 
-    options = currentopts    
-    
-    for arg in inputdictionary:
-        if arg in options:
-            options[arg]=inputdictionary[arg]
-        else:
-            print('ERROR PARAMETER SETTING: INCORRECT PARAMETER: '+arg)
 
-    return options    
