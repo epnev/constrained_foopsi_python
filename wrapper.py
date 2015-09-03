@@ -22,8 +22,7 @@ c = scs.lfilter(np.array([1]),np.concatenate([np.array([1.]),-g]),sp)
 sn = 2;
 y = c + sn*np.random.normal(0,1,T) 
 
-opt = {'verbosity' : False}
-c2,b2,c12,g2,sn2,sp2 = constrained_foopsi(y, options = opt)
+c2,b2,c12,g2,sn2,sp2 = constrained_foopsi(y)
 
 gd_vec = np.max(np.roots(np.concatenate([np.array([1]),-g.flatten()])))**np.arange(T)
 c_inferred = c2 + b2 + c12*gd_vec
